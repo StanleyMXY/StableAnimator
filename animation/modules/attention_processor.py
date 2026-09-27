@@ -4,11 +4,11 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 from diffusers.models.lora import LoRALinearLayer
-from diffusers.utils.import_utils import is_xformers_available
-if is_xformers_available():
-    import xformers
-else:
-    print(1/0)
+from diffusers.utils.import_utils import is_xformers_available as _is_xformers_available_orig
+# xformers' prebuilt kernels don't support Blackwell (sm_120, e.g. RTX 5070 Ti) yet —
+# force the module's own native-attention fallback path instead of crashing.
+def is_xformers_available():
+    return False
 
 class AnimationAttnProcessor(nn.Module):
     def __init__(
@@ -93,8 +93,12 @@ class AnimationAttnProcessor(nn.Module):
             hidden_states = xformers.ops.memory_efficient_attention(query, key, value, attn_bias=attention_mask)
             hidden_states = hidden_states.to(query.dtype)
         else:
-            attention_probs = attn.get_attention_scores(query, key, attention_mask)
-            hidden_states = torch.bmm(attention_probs, value)
+            # native SDPA (memory-efficient, no xformers kernel needed) instead of the naive
+            # full-attention-matrix fallback (get_attention_scores + bmm), which OOMs on 12GB.
+            # Matches the same pattern already used elsewhere in this file (SDPA accepts the
+            # (batch*heads, seq, dim) shape from head_to_batch_dim directly).
+            hidden_states = F.scaled_dot_product_attention(query, key, value, attn_mask=attention_mask)
+            hidden_states = hidden_states.to(query.dtype)
         hidden_states = attn.batch_to_head_dim(hidden_states)
 
         # linear proj

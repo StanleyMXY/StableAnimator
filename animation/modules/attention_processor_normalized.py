@@ -4,12 +4,11 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 from diffusers.models.lora import LoRALinearLayer
-from diffusers.utils.import_utils import is_xformers_available
-
-if is_xformers_available():
-    import xformers
-else:
-    print(1 / 0)
+from diffusers.utils.import_utils import is_xformers_available as _is_xformers_available_orig
+# xformers' prebuilt kernels don't support Blackwell (sm_120, e.g. RTX 5070 Ti) yet —
+# force the module's own native-attention fallback path instead of crashing.
+def is_xformers_available():
+    return False
 
 class AnimationIDAttnNormalizedProcessor(nn.Module):
     def __init__(

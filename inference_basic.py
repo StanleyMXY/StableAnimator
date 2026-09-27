@@ -3,7 +3,7 @@ import os
 import cv2
 import numpy as np
 from PIL import Image
-from diffusers.models.attention_processor import XFormersAttnProcessor
+from diffusers.models.attention_processor import AttnProcessor2_0 as XFormersAttnProcessor  # xformers kernels don't support Blackwell (sm_120) yet; use native SDPA instead
 from transformers import CLIPImageProcessor, CLIPVisionModelWithProjection
 import torch
 from diffusers import AutoencoderKLTemporalDecoder, EulerDiscreteScheduler
@@ -224,14 +224,16 @@ if __name__ == "__main__":
     feature_extractor = CLIPImageProcessor.from_pretrained(args.pretrained_model_name_or_path, subfolder="feature_extractor", revision=args.revision)
     noise_scheduler = EulerDiscreteScheduler.from_pretrained(args.pretrained_model_name_or_path, subfolder="scheduler")
     image_encoder = CLIPVisionModelWithProjection.from_pretrained(
-        args.pretrained_model_name_or_path, subfolder="image_encoder", revision=args.revision
+        args.pretrained_model_name_or_path, subfolder="image_encoder", revision=args.revision, variant="fp16"
     )
     vae = AutoencoderKLTemporalDecoder.from_pretrained(
-        args.pretrained_model_name_or_path, subfolder="vae", revision=args.revision)
+        args.pretrained_model_name_or_path, subfolder="vae", revision=args.revision, variant="fp16")
     unet = UNetSpatioTemporalConditionModel.from_pretrained(
         args.pretrained_model_name_or_path,
         subfolder="unet",
-        low_cpu_mem_usage=True,
+        low_cpu_mem_usage=False,  # low_cpu_mem_usage's lazy/mmap safetensors loading crashes (access violation) on Windows with this safetensors/torch combo
+        variant="fp16",  # the fp32 checkpoint's format-sniffing does a whole-file f.read() that OOMs; fp16 file is small enough to avoid it
+        torch_dtype=torch.float16,  # instantiate weights directly in fp16 (not fp32-then-cast) to roughly halve peak CPU RAM during construction
     )
     pose_net = PoseNet(noise_latent_channels=unet.config.block_out_channels[0])
     face_encoder = FusionFaceId(
